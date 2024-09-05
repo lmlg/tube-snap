@@ -1,0 +1,89 @@
+name: tube
+base: core24
+version: '0.1'
+summary: Generic storage connector
+description: |
+  Tube is a snap that allows users to create block devices backed by
+  many modules implemented by SPDK.
+grade: devel
+license: Apache-2.0
+confinement: strict
+
+environment:
+  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/opt/spdk/lib:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET:$:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET/ceph:LD_LIBRARY_PATH
+
+parts:
+  spdk:
+    plugin: nil
+    build-packages: [build-essential, librbd-dev, librados-dev, libnuma-dev,
+                     libaio-dev, libssl-dev, libjson-c-dev, python3-pip,
+                     uuid-dev, libiscsi-dev, pkgconf, meson, python3-grpcio,
+                     python3-jinja2, python3-pyelftools, libncurses-dev, git,
+                     liburing-dev, libtool-bin, autoconf, dh-autoreconf]
+    stage-packages: [libnuma1, libaio1t64, liburing2, librados2,
+                     librbd1, python3-nvme]
+    override-build: |
+      git clone https://github.com/ublk-org/ublksrv
+      autoreconf -i ./ublksrv
+      CFLAGS="-march=x86-64-v2" CXXFLAGS="-march=x86-64-v2" ./ublksrv/configure
+      make
+      make install
+      git clone -b v24.05 https://github.com/spdk/spdk.git
+      git -C spdk submodule update --init
+      mkdir -p $SNAPCRAFT_PART_INSTALL/opt/spdk/bin
+      ./spdk/configure --prefix="$SNAPCRAFT_PART_INSTALL/opt/spdk" \
+                       --with-rbd --disable-tests --disable-unit-tests \
+                       --disable-debug --disable-examples --without-golang \
+                       --without-shared --disable-cet --with-ublk --with-uring \
+                       --without-fuse --without-nvme-cuse --with-crypto \
+                       --target-arch=x86-64-v2 --with-ocf --without-xnvme \
+                       --without-iscsi-initiator --without-vhost
+      make -C spdk -j `(nproc --ignore=4)`
+      make -C spdk install
+
+  tube:
+    after: [spdk]
+    plugin: python
+    source: .
+
+slots:
+  custom-gpio-dev:
+    interface: custom-device
+    custom-device: gpiochip
+    devices:
+      # Legacy Raspberry Pis
+      - /dev/gpiochip0
+      # Raspberry Pi 5
+      - /dev/gpiochip4
+    files:
+      read:
+        - /sys/devices/platform/soc/*.gpio/gpiochip0/dev
+        - /sys/devices/platform/axi/*.pcie/*.gpio/gpiochip4/dev
+
+apps:
+  spdk-tgt:
+    command: opt/spdk/bin/spdk_tgt -m 0x1 --iova-mode va --no-huge -s 4096 --disable-cpumask-locks
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - block-devices
+      - hugepages-control
+      - shared-memory
+      - hardware-observe
+
+  target:
+    command: opt/spdk/bin/spdk_tgt
+    plugs:
+      - block-devices
+      - hugepages-control
+      - shared-memory
+      - hardware-observe
+      - cpu-control
+      - process-control
+      - network
+      - network-bind
+      - network-control
+      - mount-observe
+
+  tube:
+    command: bin/tube
