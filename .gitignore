@@ -4,7 +4,7 @@ bin
 .testrepository
 .tox
 *.sw[nop]
-*.charm
+*.snap
 .idea
 *.pyc
 func-results.json
