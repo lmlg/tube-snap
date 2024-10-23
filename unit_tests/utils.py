@@ -37,6 +37,7 @@ class MockSPDK:
         self.mallocs = {}
         self.ocfs = {}
         self.nbds = {}
+        self.aios = {}
         self.crypto_keys = set()
         self.logger = logging.getLogger('spdk')
 
@@ -211,6 +212,21 @@ class MockSPDK:
         return [{'cache': {'name': bdev['cache_bdev_name']},
                  'core': {'name': bdev['core_bdev_name']}}]
 
+    def bdev_aio_create(self, name, filename, block_size):
+        if name in self.aios:
+            raise ValueError('AIO already exists')
+
+        bdev = {'name': name, 'driver_specific':
+                {'aio': {'filename': filename}}}
+        self.aios[name] = bdev
+        self.bdevs.append(bdev)
+        return name
+
+    def bdev_aio_delete(self, name):
+        del self.aios[name]
+        self._bdev_remove(name)
+        self._ublk_remove(name)
+
     def nbd_start_disk(self, device, bdev_name, **kwargs):
         if device in self.nbds:
             raise KeyError('device already present')
@@ -242,11 +258,13 @@ class MockSPDK:
         else:
             raise KeyError('bdev does not exist')
 
-        self.bdevs.append(dict(name=name, driver_specific=dict(
-            base_bdev_name=base_bdev_name)))
+        bdev = {'name': name,
+                'driver_specific': {'crypto':
+                                    {'base_bdev_name': base_bdev_name}}}
+        self.bdevs.append(bdev)
 
-    def accel_crypto_key_destroy(self, name, **kwargs):
-        self.crypto_keys.remove(name)
+    def accel_crypto_key_destroy(self, key_name, **kwargs):
+        self.crypto_keys.remove(key_name)
 
     def bdev_crypto_delete(self, name, **kwargs):
         self._bdev_remove(name)

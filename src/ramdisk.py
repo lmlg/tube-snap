@@ -30,12 +30,15 @@ class RamdiskBackend(base.BackendBase):
     def get_description():
         return "Operate on ramdisk devices and manage caches"
 
-    def _create(self, size):
+    def _create(self, size, uid=None):
         size = utils.parse_memsize(size)
         num_blocks = -(-size // self.BLOCK_SIZE)
 
+        if uid is None:
+            uid = utils.unique_id()
+
         msg = self.rpc.bdev_malloc_create(
-            name=self.BDEV_PREFIX + '-' + utils.unique_id(),
+            name=self.BDEV_PREFIX + '-' + uid,
             block_size=self.BLOCK_SIZE,
             num_blocks=num_blocks)
 
@@ -62,16 +65,17 @@ class RamdiskBackend(base.BackendBase):
 
     @base.cliwrapper(('device', 'ramdisk block device'))
     def delete(self, device):
-        """delete a ramdisk block device."""
+        """Delete a ramdisk block device."""
         bdev = self.lookup_device(device)
         if '.ocf-' in bdev:
             rv = self._delete_ocf(bdev)
             bdev = rv[0]
+            self.clean_aio(rv[1])
 
         return self._remove(bdev)
 
     @base.cliwrapper(
-        ('device', 'managed block device'),
+        ('device', 'base block device'),
         ('-s', '--size', 'size of the cache'),
         ('-m', '--mode', {'help': 'cache mode (optional)',
                           'choices': ['wb', 'wt', 'pt', 'wa', 'wi', 'wo'],
@@ -82,23 +86,25 @@ class RamdiskBackend(base.BackendBase):
 
         As a result of this command, a new block device will be allocated.
         """
-        bdev = self.lookup_device(device, prefix=None)
-        malloc_name = self._create(size)
 
-        ocf_name = self.BDEV_PREFIX + '.ocf-' + utils.unique_id()
-        msg = self.rpc.bdev_ocf_create(
-            name=ocf_name, mode=mode,
-            cache_line_size=64,
-            cache_bdev_name=malloc_name,
-            core_bdev_name=bdev)
+        uid = utils.unique_id()
+        malloc_name = self._create(size, uid=uid)
+        bdev, ocf_name = None, None
 
         try:
-            self.msgloop(msg)
+            bdev = self.ensure_blockdev(device, uid, prefix=None)
+            ocf_name = self.BDEV_PREFIX + '.ocf-' + uid
+            self.msgloop(self.rpc.bdev_ocf_create(
+                name=ocf_name, mode=mode,
+                cache_line_size=64,
+                cache_bdev_name=malloc_name,
+                core_bdev_name=bdev))
             return self.make_blockdev(ocf_name)
         except Exception:
             self.msgloop(self.rpc.bdev_ocf_delete(name=ocf_name), default=None)
             self.msgloop(self.rpc.bdev_malloc_delete(name=malloc_name),
                          default=None)
+            self.clean_aio(bdev)
             raise
 
     def _lookup_ocf(self, device):
@@ -115,8 +121,10 @@ class RamdiskBackend(base.BackendBase):
         If successful, this call will return the previous block device.
         """
         bdev = self._lookup_ocf(device)
-        rv = self._delete_ocf(bdev)
-        return {'previous': self.lookup_bdev(rv[1])['block-device']}
+        prev = self._delete_ocf(bdev)[1]
+        ret = {'previous': self.lookup_bdev(prev)['block-device']}
+        self.clean_aio(prev)
+        return ret
 
     @base.cliwrapper(('device', 'cached block device'))
     def cache_flush(self, device):
@@ -143,7 +151,7 @@ class RamdiskBackend(base.BackendBase):
 
         for elem in self.bdev_iter(bdevs=bdevs):
             name = elem['name']
-            device = self.lookup_bdev(name, blks=blks)
+            device = self.lookup_bdev(name, blks=blks, bdevs=bdevs)
 
             if not device:
                 continue
@@ -151,7 +159,8 @@ class RamdiskBackend(base.BackendBase):
             base = {}
             if '.ocf-' in name:
                 ds = elem['driver_specific']
-                core = self.lookup_bdev(ds['core_device'], blks=blks)
+                core = self.lookup_bdev(ds['core_device'],
+                                        blks=blks, bdevs=bdevs)
                 cache_bdev = self.bdev_info(ds['cache_device'], bdevs=bdevs)
 
                 if not core or not cache_bdev:
@@ -159,7 +168,6 @@ class RamdiskBackend(base.BackendBase):
 
                 base['core'] = core['block-device']
                 elem = cache_bdev
-
 
             size = elem['block_size'] * elem['num_blocks']
             base.update({'device': device['block-device'],

@@ -168,7 +168,7 @@ class BackendBase:
             if bdev['name'] == bdev_name:
                 return bdev
 
-    def lookup_bdev(self, bdev, filt=None, blks=None):
+    def lookup_bdev(self, bdev, filt=None, blks=None, bdevs=None):
         for elem in (blks or self.list_blks()):
             name = elem['bdev_name']
             if filt is not None:
@@ -176,6 +176,14 @@ class BackendBase:
 
             if name == bdev:
                 return {'block-device': elem['blk_device']}
+
+        for elem in (bdevs or self.msgloop(self.rpc.bdev_get_bdevs())):
+            if elem['name'] != bdev or 'driver_specific' not in elem:
+                continue
+
+            ds = elem['driver_specific'].get('aio')
+            if ds is not None:
+                return {'block-device': ds['filename']}
 
     def make_blockdev(self, bdev):
         if os.access('/dev/ublk-control', os.F_OK):
@@ -216,7 +224,7 @@ class BackendBase:
                      'bdev_name': x['bdev_name']} for x in nbds])
         return ret
 
-    def lookup_device(self, device, blks=None, **kwargs):
+    def lookup_device(self, device, blks=None, bdevs=None, **kwargs):
         prefix = kwargs.get('prefix', self.BDEV_PREFIX)
 
         for elem in (blks or self.list_blks()):
@@ -231,3 +239,29 @@ class BackendBase:
     @staticmethod
     def is_error(value):
         return isinstance(value, dict) and 'error' in value
+
+    @staticmethod
+    def is_aio(value):
+        return isinstance(value, str) and value.startswith('aio-')
+
+    def clean_aio(self, bdev):
+        if self.is_aio(bdev):
+            self.msgloop(self.rpc.bdev_aio_delete(name=bdev), default=None)
+
+    def _make_aio(self, uid, device):
+        name = 'aio-' + uid
+        try:
+            if utils.is_blockdev(device):
+                self.msgloop(self.rpc.bdev_aio_create(
+                    name=name, filename=device, block_size=4096))
+                return name
+        except Exception:
+            pass
+
+        raise TargetError('path does not describe a block device')
+
+    def ensure_blockdev(self, device, uid, blks=None, **kwargs):
+        try:
+            return self.lookup_device(device, blks=blks, **kwargs)
+        except TargetError:
+            return self._make_aio(uid, device)

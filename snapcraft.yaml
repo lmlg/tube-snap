@@ -7,7 +7,7 @@ description: |
   many modules implemented by SPDK.
 grade: devel
 license: Apache-2.0
-confinement: strict
+confinement: devmode
 
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/opt/spdk/lib:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET:$:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET/ceph:LD_LIBRARY_PATH
@@ -19,16 +19,17 @@ parts:
                      libaio-dev, libssl-dev, libjson-c-dev, python3-pip,
                      uuid-dev, libiscsi-dev, pkgconf, meson, python3-grpcio,
                      python3-jinja2, python3-pyelftools, libncurses-dev, git,
-                     liburing-dev, libtool-bin, autoconf, dh-autoreconf]
+                     liburing-dev, libtool-bin, autoconf, dh-autoreconf,
+                     libpmem-dev, nasm]
     stage-packages: [libnuma1, libaio1t64, liburing2, librados2,
-                     librbd1, python3-nvme]
+                     librbd1, python3-nvme, libpmem2]
     override-build: |
       git clone https://github.com/ublk-org/ublksrv
       autoreconf -i ./ublksrv
-      CFLAGS="-march=x86-64-v2" CXXFLAGS="-march=x86-64-v2" ./ublksrv/configure
+      ./ublksrv/configure
       make
       make install
-      git clone -b v24.05 https://github.com/spdk/spdk.git
+      git clone -b v24.09 https://github.com/spdk/spdk.git
       git -C spdk submodule update --init
       mkdir -p $SNAPCRAFT_PART_INSTALL/opt/spdk/bin
       ./spdk/configure --prefix="$SNAPCRAFT_PART_INSTALL/opt/spdk" \
@@ -36,8 +37,9 @@ parts:
                        --disable-debug --disable-examples --without-golang \
                        --without-shared --disable-cet --with-ublk --with-uring \
                        --without-fuse --without-nvme-cuse --with-crypto \
-                       --target-arch=x86-64-v2 --with-ocf --without-xnvme \
-                       --without-iscsi-initiator --without-vhost
+                       --with-ocf --without-xnvme --without-iscsi-initiator \
+                       --without-vhost --with-vbdev-compress --with-aio-fsdev \
+                       --with-dpdk-compressdev
       make -C spdk -j `(nproc --ignore=4)`
       make -C spdk install
 

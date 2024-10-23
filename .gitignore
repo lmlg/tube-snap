@@ -8,5 +8,5 @@ bin
 .idea
 *.pyc
 func-results.json
-.stestr
+.stestr*
 __pycache__

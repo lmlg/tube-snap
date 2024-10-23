@@ -57,11 +57,14 @@ class CryptBackend(base.BackendBase):
 
         As a result of this command, a new block device will be allocated.
         """
-        bdev = self.lookup_device(device, prefix=None)
+
         uid = utils.unique_id()
         key = self._key_create(uid, cipher=cipher, key=key, key2=key2,
                                tweak_mode=tweak_mode)
+        bdev, new_bdev = None, None
+
         try:
+            bdev = self.ensure_blockdev(device, uid, prefix=None)
             new_bdev = self.BDEV_PREFIX + '-' + uid
             msg = self.rpc.bdev_crypto_create(
                 base_bdev_name=bdev, key_name=key,
@@ -71,8 +74,9 @@ class CryptBackend(base.BackendBase):
         except Exception:
             self.msgloop(self.rpc.bdev_crypto_delete(name=new_bdev),
                          default=None)
-            self.msgloop(self.rpc.accel_crypto_key_destroy(name=key),
+            self.msgloop(self.rpc.accel_crypto_key_destroy(key_name=key),
                          default=None)
+            self.clean_aio(bdev)
             raise
 
     @base.cliwrapper(
@@ -83,18 +87,20 @@ class CryptBackend(base.BackendBase):
         plen = len(self.BDEV_PREFIX)
         key = bdev[:plen] + '.key' + bdev[plen:]
         self.msgloop(self.rpc.bdev_crypto_delete(name=bdev))
-        self.msgloop(self.rpc.accel_crypto_key_destroy(name=key))
+        self.msgloop(self.rpc.accel_crypto_key_destroy(key_name=key))
+        self.clean_aio(bdev)
 
     @base.cliwrapper()
     def list(self):
         """List all managed encrypted devices."""
         blks = self.list_blks()
+        bdevs = self.msgloop(self.rpc.bdev_get_bdevs(), default=())
         ret = []
 
         for bdev in self.bdev_iter():
-            tmp = bdev['driver_specific']['base_bdev_name']
-            dev1 = self.lookup_bdev(bdev['name'], blks=blks)
-            dev2 = self.lookup_bdev(tmp, blks=blks)
+            tmp = bdev['driver_specific']['crypto']['base_bdev_name']
+            dev1 = self.lookup_bdev(bdev['name'], blks=blks, bdevs=bdevs)
+            dev2 = self.lookup_bdev(tmp, blks=blks, bdevs=bdevs)
 
             if dev1 and dev2:
                 ret.append({'device': dev1['block-device'],

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import stat
 import unittest.mock as mock
 
 import src.base as base
@@ -27,8 +28,10 @@ class TestRamdisk(utils.BaseTest):
     OBJ_CLS = RamdiskBackend
 
     @mock.patch.object(base.os, 'access')
-    def test_ramdisk(self, access):
+    @mock.patch.object(stat, 'S_ISBLK')
+    def test_ramdisk(self, access, s_isblk):
         access.return_value = True
+        s_isblk.return_value = True
         rv = self.ramdisk.create(size='1.2G')
         self.assertEqual(rv, {'block-device': '/dev/ublkb1'})
 
@@ -56,3 +59,10 @@ class TestRamdisk(utils.BaseTest):
 
         rv = self.ramdisk.uncache(device='/dev/ublkb2')
         self.assertEqual({'previous': '/dev/ublkb1'}, rv)
+
+        # Try caching a non-managed device.
+        rv = self.ramdisk.cache(device='/dev/null', size='1.2G')
+        self.assertFalse(self.ramdisk.is_error(rv))
+
+        rv = self.ramdisk.uncache(rv['block-device'])
+        self.assertEqual(rv['previous'], '/dev/null')

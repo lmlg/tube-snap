@@ -22,6 +22,7 @@ except ImportError:
 import base64
 import hmac
 import multiprocessing
+import os
 import random
 import socket
 import uuid
@@ -96,7 +97,6 @@ class NVMEBackend(base.BackendBase):
         return name[:idx] if idx >= 0 else name
 
     def _list(self):
-        blks = self.list_blks()
         ret = {}
 
         for bdev in self.bdev_iter():
@@ -107,7 +107,7 @@ class NVMEBackend(base.BackendBase):
 
             spec = bdev['driver_specific']['nvme']
             base = {'name': name, 'nqn': spec[0]['trid']['subnqn']}
-            out = ret.setdefault(blk['block-device'], base).setdefault(
+            ret.setdefault(blk['block-device'], base).setdefault(
                 'paths', []).extend(x['trid'] for x in spec)
 
         return ret
@@ -233,6 +233,14 @@ class NVMEBackend(base.BackendBase):
             rv = self.msgloop(msg, default=None)
             return None if rv is None else fname
 
+    def _remove_key(self, fname):
+        self.msgloop(self.rpc.keyring_file_remove_key(name=fname),
+                     default=None)
+        try:
+            os.remove(NVMEBackend.KEYS_DIR + fname)
+        except Exception:
+            pass
+
     def _make_bdev_name(self, subnqn):
         # Note: Unlike other backends, we can't simply generate a
         # random bdev name, because NVMe controllers need to have
@@ -291,24 +299,24 @@ class NVMEBackend(base.BackendBase):
             name=bdev, trtype=trtype, traddr=traddr, adrfam=adrfam,
             trsvcid=trsvcid, subnqn=subnqn,
             multipath='multipath', hostnqn=hostnqn)
+        params = msg['params']
 
         if dhchap_key is not None:
             key = self._ensure_key(dhchap_key)
             if key is None:
                 raise base.TargetError('failed to add DH-CHAP key')
 
-            msg['params']['dhchap_key'] = key
+            params['dhchap_key'] = key
 
         if hostaddr is not None:
-            msg['params']['hostaddr'] = hostaddr
+            params['hostaddr'] = hostaddr
         if hostsvcid is not None:
-            msg['params']['hostsvcid'] = hostsvcid
-
-        rv = self.msgloop(msg)
-        if not blockdev_needed:
-            return self.lookup_bdev(bdev, self._filt_nvme)
+            params['hostsvcid'] = hostsvcid
 
         try:
+            rv = self.msgloop(msg)
+            if not blockdev_needed:
+                return self.lookup_bdev(bdev, self._filt_nvme)
             return self.make_blockdev(rv[0])
         except Exception:
             msg = self.rpc.bdev_nvme_detach_controller(
@@ -320,6 +328,10 @@ class NVMEBackend(base.BackendBase):
                 msg['params']['hostsvcid'] = hostsvcid
 
             self.msgloop(msg, default=None)
+
+            if dhchap_key is not None:
+                self._remove_key(key)
+
             raise
 
     @base.cliwrapper(

@@ -73,3 +73,7 @@ def format_size(size):
             return '%3.1f%s' % (size, unit)
         size /= 1024
     return '%f%s' % (size, 'Y')
+
+
+def is_blockdev(path):
+    return path.startswith('/dev/')
