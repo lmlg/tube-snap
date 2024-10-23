@@ -88,17 +88,12 @@ class CryptBackend(base.BackendBase):
     @base.cliwrapper()
     def list(self):
         """List all managed encrypted devices."""
-        bdevs = self.msgloop(self.rpc.bdev_get_bdevs(), default=())
         blks = self.list_blks()
         ret = []
 
-        for bdev in bdevs:
-            name = bdev['name']
-            if not name.startswith(self.BDEV_PREFIX):
-                continue
-
+        for bdev in self.bdev_iter():
             tmp = bdev['driver_specific']['base_bdev_name']
-            dev1 = self.lookup_bdev(name, blks=blks)
+            dev1 = self.lookup_bdev(bdev['name'], blks=blks)
             dev2 = self.lookup_bdev(tmp, blks=blks)
 
             if dev1 and dev2:

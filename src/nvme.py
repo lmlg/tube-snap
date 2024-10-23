@@ -96,24 +96,19 @@ class NVMEBackend(base.BackendBase):
         return name[:idx] if idx >= 0 else name
 
     def _list(self):
-        bdevs = self.msgloop(self.rpc.bdev_get_bdevs())
         blks = self.list_blks()
         ret = {}
 
-        for bdev in bdevs:
+        for bdev in self.bdev_iter():
             name = bdev['name']
-            if not name.startswith(self.BDEV_PREFIX):
+            blk = self.lookup_bdev(name)
+            if blk is None:
                 continue
 
-            for blk in blks:
-                if blk['bdev_name'] != name:
-                    continue
-
-                spec = bdev['driver_specific']['nvme']
-                base = {'name': name, 'nqn': spec[0]['trid']['subnqn']}
-                out = ret.setdefault(blk['blk_device'], base).setdefault(
-                    'paths', [])
-                out.extend(x['trid'] for x in spec)
+            spec = bdev['driver_specific']['nvme']
+            base = {'name': name, 'nqn': spec[0]['trid']['subnqn']}
+            out = ret.setdefault(blk['block-device'], base).setdefault(
+                'paths', []).extend(x['trid'] for x in spec)
 
         return ret
 
